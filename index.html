@@ -1,1 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini-Powered Real-time Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- In a real app, you would include the Socket.IO client script from your server -->
+    <!-- <script src="/socket.io/socket.io.js"></script> -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .message-enter-active, .message-leave-active { transition: all 0.3s ease; }
+        .message-enter-from, .message-leave-to { opacity: 0; transform: translateY(10px); }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="app" class="h-screen flex flex-col">
+        <!-- Login Screen -->
+        <div v-if="!username" class="flex items-center justify-center h-full bg-gray-200">
+            <div class="bg-white p-8 rounded-lg shadow-lg text-center w-full max-w-sm">
+                <h1 class="text-2xl font-bold mb-4">Join Gemini Chat</h1>
+                <form @submit.prevent="joinChat">
+                    <input v-model="inputUsername" type="text" placeholder="Enter your username" class="w-full p-3 border rounded-md" required>
+                    <button type="submit" class="w-full mt-4 px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700">Join</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Main Chat Interface -->
+        <div v-else class="flex flex-grow overflow-hidden">
+            <!-- Sidebar -->
+            <div class="w-1/4 bg-gray-800 text-white flex flex-col p-4">
+                <h2 class="text-xl font-bold mb-4 border-b border-gray-700 pb-2">Rooms</h2>
+                <ul class="space-y-2 mb-6">
+                    <li v-for="room in rooms" :key="room.id" @click="selectRoom(room.id)"
+                        class="p-2 rounded-md cursor-pointer"
+                        :class="activeRoomId === room.id ? 'bg-blue-600' : 'hover:bg-gray-700'">
+                        # {{ room.name }}
+                    </li>
+                </ul>
+                <h2 class="text-xl font-bold mb-4 border-b border-gray-700 pb-2">Online Users</h2>
+                <ul class="space-y-2 flex-grow">
+                     <li v-for="user in users" :key="user.id"
+                        class="flex items-center space-x-2 p-2 rounded-md"
+                        :class="{'font-bold': user.name === username}">
+                        <span class="h-3 w-3 rounded-full" :class="user.name === 'GeminiBot' ? 'bg-purple-500' : 'bg-green-500'"></span>
+                        <span>{{ user.name }} <span v-if="user.name === username">(You)</span></span>
+                    </li>
+                </ul>
+                <div class="text-sm text-gray-400">
+                    <p>Logged in as: <strong>{{ username }}</strong></p>
+                </div>
+            </div>
+
+            <!-- Main Chat Area -->
+            <div class="w-3/4 flex flex-col bg-white">
+                <header class="p-4 border-b bg-gray-50">
+                    <h1 class="text-2xl font-bold text-gray-800"># {{ activeRoom.name }}</h1>
+                    <p class="text-gray-500">{{ activeRoom.description }}</p>
+                </header>
+
+                <main ref="messageContainer" class="flex-grow p-6 overflow-y-auto">
+                    <div class="space-y-4">
+                        <transition-group name="message">
+                            <div v-for="msg in messages" :key="msg.id">
+                                <div v-if="msg.type === 'system'" class="text-center text-sm text-gray-500 my-2">
+                                    {{ msg.text }}
+                                </div>
+                                <div v-else class="flex items-end" :class="[msg.username === username ? 'justify-end' : 'justify-start', msg.username === 'GeminiBot' ? 'items-start' : '']">
+                                    <div v-if="msg.username === 'GeminiBot'" class="mr-2 p-1 bg-purple-200 rounded-full">
+                                        <svg class="w-6 h-6 text-purple-600" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+                                    </div>
+                                    <div class="max-w-lg">
+                                        <div v-if="msg.username !== username" class="text-sm text-gray-600">{{ msg.username }}</div>
+                                        <div class="px-4 py-2 rounded-lg" :class="getMessageClasses(msg.username)">
+                                            {{ msg.text }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="botIsTyping" key="bot-typing" class="flex items-end">
+                                <div class="mr-2 p-1 bg-purple-200 rounded-full">
+                                    <svg class="w-6 h-6 text-purple-600" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+                                </div>
+                                <div class="px-4 py-2 rounded-lg bg-gray-200 text-gray-800">
+                                    <span class="animate-pulse">...</span>
+                                </div>
+                            </div>
+                        </transition-group>
+                    </div>
+                </main>
+
+                <footer class="p-4 bg-gray-100 border-t">
+                    <div v-if="smartReplies.length > 0" class="flex items-center space-x-2 mb-2">
+                         <span class="text-sm font-semibold text-gray-600">✨ Smart Replies:</span>
+                         <button v-for="reply in smartReplies" :key="reply" @click="useSmartReply(reply)"
+                            class="px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm hover:bg-gray-300 transition-colors">
+                            {{ reply }}
+                        </button>
+                    </div>
+                     <div v-if="smartReplyLoading" class="flex items-center space-x-2 mb-2">
+                        <span class="text-sm font-semibold text-gray-600">✨ Generating replies...</span>
+                        <div class="w-4 h-4 border-2 border-dashed rounded-full animate-spin border-gray-500"></div>
+                    </div>
+                    <form @submit.prevent="sendMessage" class="flex space-x-4">
+                        <input v-model="newMessage" type="text" placeholder="Type your message, or start with @GeminiBot..." class="flex-grow p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button type="submit" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700">Send</button>
+                    </form>
+                </footer>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        const { createApp, ref, onMounted, computed, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const username = ref('');
+                const inputUsername = ref('');
+                const users = ref([]);
+                const rooms = ref([
+                    { id: 'general', name: 'general', description: 'General chat and announcements.' },
+                    { id: 'random', name: 'random', description: 'For off-topic discussions and fun.' },
+                    { id: 'tech', name: 'tech', description: 'Talk about technology and code.' }
+                ]);
+                const activeRoomId = ref('general');
+                const messages = ref([]);
+                const newMessage = ref('');
+                const messageContainer = ref(null);
+                const botIsTyping = ref(false);
+                const smartReplies = ref([]);
+                const smartReplyLoading = ref(false);
+
+                const activeRoom = computed(() => rooms.value.find(r => r.id === activeRoomId.value));
+
+                // --- Gemini API Integration ---
+                const callGemini = async (prompt) => {
+                    if (!prompt || prompt.trim() === '') {
+                        return "I can't respond to an empty message!";
+                    }
+                    const apiKey = ""; 
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+
+                    try {
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
+                        const result = await response.json();
+                        if (result.candidates && result.candidates[0]?.content.parts[0]?.text) {
+                            return result.candidates[0].content.parts[0].text;
+                        }
+                        return "Sorry, I couldn't generate a response.";
+                    } catch (error) {
+                        console.error("Gemini API call failed:", error);
+                        throw error; // Re-throw to be caught by the caller
+                    }
+                };
+
+                const getMessageClasses = (msgUsername) => {
+                    if (msgUsername === username.value) return 'bg-blue-500 text-white';
+                    if (msgUsername === 'GeminiBot') return 'bg-purple-100 text-gray-800';
+                    return 'bg-gray-200 text-gray-800';
+                };
+
+                const joinChat = () => {
+                    if (inputUsername.value.trim()) {
+                        username.value = inputUsername.value;
+                        users.value.push({ id: Date.now(), name: username.value });
+                        users.value.push({ id: 'gemini-bot', name: 'GeminiBot' });
+                        selectRoom('general');
+                    }
+                };
+
+                const selectRoom = (roomId) => {
+                    activeRoomId.value = roomId;
+                    messages.value = [];
+                    smartReplies.value = [];
+                    messages.value.push({ id: Date.now(), type: 'system', text: `You have joined the #${rooms.value.find(r=>r.id === roomId).name} room. Say hi, or try asking the bot a question with "@GeminiBot What is Vue.js?"` });
+                };
+
+                const sendMessage = async () => {
+                    if (!newMessage.value.trim()) return;
+
+                    const messageText = newMessage.value;
+                    const lastMessage = messages.value.filter(m => m.type !== 'system').pop()?.text || "the beginning of the conversation";
+                    
+                    messages.value.push({ id: Date.now(), username: username.value, text: messageText, roomId: activeRoomId.value });
+                    newMessage.value = '';
+                    smartReplies.value = [];
+                    scrollToBottom();
+
+                    if (messageText.toLowerCase().startsWith('@geminibot')) {
+                        botIsTyping.value = true;
+                        scrollToBottom();
+                        const prompt = messageText.substring(10).trim();
+                        try {
+                            const botResponse = await callGemini(prompt);
+                            messages.value.push({ id: Date.now(), username: 'GeminiBot', text: botResponse, roomId: activeRoomId.value });
+                        } catch (e) {
+                            messages.value.push({ id: Date.now(), username: 'GeminiBot', text: "Sorry, I'm having trouble connecting to my brain right now.", roomId: activeRoomId.value });
+                        } finally {
+                            botIsTyping.value = false;
+                        }
+                    } else {
+                        smartReplyLoading.value = true;
+                        const prompt = `The last message in the chat was: "${lastMessage}". The new message is: "${messageText}". Based on the new message, generate 3 short, relevant, one-to-three word replies. Format them as a comma-separated list. For example: "Sounds good,I agree,Tell me more"`;
+                        try {
+                            const repliesString = await callGemini(prompt);
+                            smartReplies.value = repliesString.split(',').map(r => r.trim()).slice(0, 3);
+                        } catch (e) {
+                            // Silently fail, don't show an error for smart replies
+                            console.error("Failed to generate smart replies:", e);
+                        } finally {
+                            smartReplyLoading.value = false;
+                        }
+                    }
+                    scrollToBottom();
+                };
+
+                const useSmartReply = (reply) => {
+                    newMessage.value = reply;
+                    sendMessage();
+                };
+                
+                const scrollToBottom = () => {
+                    nextTick(() => {
+                        if (messageContainer.value) {
+                            messageContainer.value.scrollTop = messageContainer.value.scrollHeight;
+                        }
+                    });
+                };
+                
+                return {
+                    username, inputUsername, users, rooms, activeRoomId, activeRoom, messages, newMessage,
+                    messageContainer, botIsTyping, smartReplies, smartReplyLoading, joinChat, selectRoom, sendMessage,
+                    getMessageClasses, useSmartReply
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
 
